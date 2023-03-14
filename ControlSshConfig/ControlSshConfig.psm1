@@ -1,95 +1,188 @@
-# Создаем папку для ssh, если она существует выводим ошибку
-function New-CreateDirSsh {
+Add-Type -AssemblyName System.Drawing
+
+function Read-ColoredLine {
+  param(
+    [string]$Prompt,
+    [System.ConsoleColor]$ForegroundColor = "Yellow"
+  )
+  Write-Host -NoNewline $Prompt -ForegroundColor $ForegroundColor
+  #-BackgroundColor B
+  return [Console]::ReadLine()
+}
+
+function Invoke-TestHost {
+  $HostInput = Read-ColoredLine -Prompt "Введите алиас ssh сервера: "# -ForegroundColor Green
+  $Host_0 = [string]$HostInput
+
+  if(Test-SSHHost $Host_0){
+    $HostnameInput = Read-ColoredLine -Prompt "Введите адрес сервера: "
+    $PassworInput = Read-ColoredLine -Prompt "Введите пароль для root: "
+    if(New-DirSsh $HostInput){
+      if(New-SSHKey $env:USERPROFILE\.ssh\$HostInput){
+        New-SetupServer $HostInput $HostnameInput "~/.ssh/$HostInput/id_ed25519"
+        
+      
+      }
+      
+    }
+  }
+  
+  # $Multiplier = [int]$UserInput2
+
+  # $Step1Result = $Number * $Multiplier
+
+  # $UserInput3 = Read-Host "Введите значение для добавления"
+  # $ValueToAdd = [int]$UserInput3
+
+  # $Step2Result = $Step1Result + $ValueToAdd
+
+  #return $Host_0
+}
+New-Alias 'test_host' Invoke-TestHost
+
+function Test-SSHHost {
+  [CmdletBinding()]
+  param (
+    [Parameter(Mandatory=$true, Position=0)]
+    [Alias('h')]
+    [string]$HostName,
+    
+    [Parameter(Position=1)]
+    [Alias('f')]
+    [string]$FilePath = "$env:USERPROFILE\.ssh\config"
+  )
+
+  if (Test-Path -Path $FilePath) {
+    $configFileContent = Get-Content -Path $FilePath
+
+    if ($configFileContent -match "Host\s+$HostName\b") {
+      Write-Host "Ошибка: " -NoNewline -ForegroundColor Red
+      Write-Host "Host с названием " -NoNewline -ForegroundColor Yellow
+      Write-Host $HostName -NoNewline -ForegroundColor Blue
+      Write-Host " уже существует в " -NoNewline -ForegroundColor Yellow
+      Write-Host $FilePath -ForegroundColor Magenta
+      return 0
+    }
+    else {
+      Write-Host "OK... " -NoNewline -ForegroundColor Green
+      Write-Host "Host с названием " -NoNewline -ForegroundColor Yellow
+      Write-Host $HostName -NoNewline -ForegroundColor Blue
+      Write-Host " не существует в " -NoNewline -ForegroundColor Yellow
+      Write-Host $FilePath -ForegroundColor Magenta
+      return 1
+    }
+  }
+  else {
+    Write-Output "SSH config file $FilePath не существут"
+  }
+}
+New-Alias 'th' Test-SSHHost
+
+# 1. Создаем папку для ssh, если она существует выводим ошибку
+function New-DirSsh {
   # Проверяем, существует ли папка "C:\Users\Username\Documents"
   if (Test-IsDir "$env:USERPROFILE\.ssh\$args\") {
     Write-Host "Ошибка: " -NoNewline -ForegroundColor Red
     Write-Host "Папка существует." -ForegroundColor DarkYellow
-    
+    return 0
   } else {
     ni -I "directory" -P $env:USERPROFILE\.ssh\$args\ | Out-Null
-    Write-Host "Создана папка "  -NoNewline -ForegroundColor Green
+    Write-Host "OK... "  -NoNewline -ForegroundColor Green
+    Write-Host "Создана папка "  -NoNewline -ForegroundColor Yellow
     Write-Host $env:USERPROFILE\.ssh\$args\ -ForegroundColor Magenta
+    return 1
   }
-  
 }
-New-Alias 'cds' New-CreateDirSsh
+New-Alias 'nds' New-DirSsh
 
-# Генерация нового ключа
-function Generate-SSHKey {
-  param (
-    [Parameter(Mandatory=$true)]
-    [string]$KeyPath,
-    [Parameter(Mandatory=$true)]
-    [string]$KeyName
-  )
-  # Проверяем, существует ли файл ключа
-  $FullPath = Join-Path $KeyPath $KeyName
-  if (Test-Path $FullPath) {
-    throw "Ключ $FullPath уже существует."
-  }
-  # Генерируем новый ключ
-  ssh-keygen -t ed25519 -N "" -f $FullPath
-}
-
-function Add-SSHServer {
+# 2. Генерация нового SSH-ключа
+function New-SSHKey {
   [CmdletBinding()]
   param (
-    [Parameter(Mandatory = $true, Position = 0, HelpMessage = 'Имя хоста или IP-адрес SSH-сервера')]
-    [Alias('s')]
-    [string]$Server,
+    [Parameter(Mandatory=$false)]
+    [Alias('p')]
+    [string]$Path = (Get-Location).Path,
+    [Parameter(Mandatory=$false)]
+    [Alias('n')]
+    [string]$KeyName = "id_ed25519"
+    
+  )
 
-    [Parameter(Mandatory = $false, Position = 1, HelpMessage = 'Имя пользователя, которое будет использоваться при подключении к SSH-серверу.')]
-    [Alias('u')]
-    [string]$Username = $env:USERNAME,
+  $FullPath = Join-Path $Path $KeyName
+  Write-Host $FullPath
 
-    [Parameter(Mandatory = $false, Position = 2, HelpMessage = 'Порт, используемый при подключении к SSH-серверу.')]
+  # Проверяем, существует ли файл ключа
+  if (Test-Path $FullPath) {
+    throw "Ключ $FullPath уже существует."
+  }else{
+    # Генерируем новый ключ
+    ssh-keygen -f $FullPath -N '""' -t ed25519 
+    return 1
+  }
+
+}
+New-Alias 'newkey' New-SSHKey
+
+function New-SetupServer {
+  [CmdletBinding()]
+  param (
+    [Parameter(Mandatory = $true, Position = 0, HelpMessage = 'Oпределяет имя или псевдоним хоста')]
+    [Alias('a')]
+    [string]$HostAlias,
+    [Parameter(Mandatory = $true, Position = 1, HelpMessage = 'Имя хоста или IP-адрес SSH-сервера')]
+    [Alias('h')]
+    [string]$Hostname,
+    [Parameter(Mandatory = $true, Position = 2, HelpMessage = 'Путь к файлу закрытого ключа для использования при подключении к серверу SSH.')]
+    [Alias('k')]
+    [string]$PrivateKeyPath,
+    #[string]$PrivateKey = $null,
+    [Parameter(Mandatory = $false, Position = 3, HelpMessage = 'Порт, используемый при подключении к SSH-серверу.')]
     [Alias('p')]
     [int]$Port = 22,
-
-    [Parameter(Mandatory = $false, Position = 3, HelpMessage = 'Путь к файлу закрытого ключа для использования при подключении к серверу SSH.')]
-    [Alias('k')]
-    [string]$PrivateKey = $null
+    [Parameter(Mandatory = $false, Position = 4, HelpMessage = 'Имя пользователя, которое будет использоваться при подключении к SSH-серверу.')]
+    [Alias('u')]
+    [string]$Username = "root"
   )
+
   # Путь к конфигурационному файлу ssh
   $config_file = "$env:USERPROFILE\.ssh\config"
 
-  # Проверяем наличие конфигурационного файла
-  if (!(Test-Path $config_file)) {
-    # Если файл не существует, создаем его
-    New-Item -ItemType File $config_file | Out-Null
-  }
-
   # Создаем объект для работы с конфигурационным файлом
-  $ssh_config = New-Object -TypeName OpenSSHUtils.SshConfigFile -ArgumentList $config_file
+  #$ssh_config = New-Object -TypeName OpenSSHUtils.SshConfigFile -ArgumentList $config_file
 
-  # Добавляем параметры подключения
-  $server_config.AddParameter("User", $Username)
-  $server_config.AddParameter("Port", $Port)
+  # # Добавляем параметры подключения
+  # $server_config.AddParameter("User", $Username)
+  # $server_config.AddParameter("Port", $Port)
 
   # Если задан путь к приватному ключу, добавляем его в конфигурацию сервера
-  if ($PrivateKey) {
-    $key_file = Get-Item $PrivateKey
+  if ($PrivateKeyPath) {
+    $key_file = Get-Item $PrivateKeyPath
 
     if ($key_file.Extension -eq '.ppk') {
       # Конвертируем PuTTY-ключ в OpenSSH-формат
-      $private_key = & "$env:ProgramFiles\PuTTY\puttygen.exe" $PrivateKey -O private-openssh
+      $private_key = & "$env:ProgramFiles\PuTTY\puttygen.exe" $PrivateKeyPath -O private-openssh
       $private_key = [System.Text.Encoding]::UTF8.GetString($private_key)
 
       $server_config.AddParameter("IdentityFile", $private_key)
     } else {
-      $server_config.AddParameter("IdentityFile", $PrivateKey)
+          $config = @"
+
+Host $HostAlias
+  Port $Port
+  HostName $Hostname
+  IdentityFile $PrivateKeyPath
+  User $Username
+"@
+    # Добавляем элемент конфигурации сервера в конфигурационный файл
+    Add-Content $config_file $config
     }
   }
-
-  # Добавляем элемент конфигурации сервера в конфигурационный файл
-  $ssh_config.AddHost($server_config)
-
-  # Сохраняем изменения
-  $ssh_config.Save()
 
   Write-Host "Сервер $Server успешно добавлен в конфигурационный файл ssh."
 
 }
+
+# Выводит список серверов из файла config
 
 function Get-SSHServerList {
   # Путь к конфигурационному файлу ssh
@@ -103,11 +196,9 @@ function Get-SSHServerList {
 
   # Читаем содержимое файла и ищем строки, начинающиеся с "Host"
   Get-Content $config_file | Where-Object { $_.StartsWith("Host ") } | ForEach-Object {
-    # Извлекаем имя сервера из строки конфигурации
-    $server = $_.Split(" ")[1]
+    # Извлекаем имя сервера из строки конфигурации и выводим
+    Write-Host $_.Split(" ")[1] -ForegroundColor Blue
 
-    # Возвращаем имя сервера
-    $server
   }
 }
 
@@ -159,12 +250,12 @@ function Find-SSHKeyByHostName {
           $key = $key.Replace("~", $env:USERPROFILE)
         }
 
-        $key = Resolve-Path $key
+        $key = Resolve-Path "$key.pub"
 
         if (-not (Test-Path $key)) {
           throw "Key file not found: $key"
         }
-
+        # Получаем содержимое публичного ключа
         $key = Get-Content $key -Raw
         break
       }
@@ -184,4 +275,4 @@ function Find-SSHKeyByHostName {
     Write-Error $_.Exception.Message
   }
 }
-New-Alias 'getkey' Get-SSHKeyByHostName
+New-Alias 'getkey' Find-SSHKeyByHostName
